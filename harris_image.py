@@ -2,6 +2,8 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 
 
+
+
 def describe_point(im: np.ndarray, pos: list) -> dict:
     """Crée un descripteur de caractéristique pour un point l'image
     Parameters
@@ -20,11 +22,11 @@ def describe_point(im: np.ndarray, pos: list) -> dict:
     # Descripteur
     d = dict()
     d["pos"] = pos
-    d["n"] = (2*r + 1)**2*im.shape[2] # Nombre de valeurs dans le descripteur
+    d["n"] = (2*r + 1)**2*im.shape[1] # Nombre de valeurs dans le descripteur
     d["data"] = np.zeros((d["n"],), dtype=float)
 
     # Valeur du pixel central
-    cval = im[pos[0], pos[1], :]
+    cval = im[pos[0], pos[1]]
 
     # Limite du voisinage
     r0 = pos[0] - r if pos[0] - r > 0 else 0
@@ -33,7 +35,8 @@ def describe_point(im: np.ndarray, pos: list) -> dict:
     c1 = pos[1] + r + 1 if pos[1] + r + 1 < im.shape[1] else im.shape[1]-1
 
     # Extraction et normalisation des valeurs
-    values = (im[r0:r1, c0:c1, :].astype(float) - cval).ravel()
+    #values = (im[r0:r1, c0:c1, :].astype(float) - cval).ravel()
+    values = (im[r0:r1, c0:c1].astype(float) - cval).ravel()
 
     # Intégration dans le descripteur
     d['data'][0:len(values)] = values
@@ -108,35 +111,88 @@ def smooth_image(im: np.ndarray, sigma: float) -> np.ndarray:
 
 def structure_matrix(im: np.ndarray, sigma: float) -> np.ndarray:         #ok#1
 
-
-    # Calcul des dérivées gaussiennes Ix et Iy avec un lissage gaussien
-    
-    Ix = gaussian_filter(im, (0, 1), order=(0, 1), sigma=sigma)
-    Iy = gaussian_filter(im, (1, 0), order=(1, 0), sigma=sigma)
-
-    # Initialisation du tenseur de structure
+    """Calcul du tenseur de structure d'un image.
+        Parameters
+        ----------
+        im: ndarray
+            Image à traiter (tons de gris et normalisée entre 0 et 1).
+        sigma: float
+            Écart-type pour la somme pondérée
+        Returns
+        -------
+        S: ndarray
+            Tenseur de structure. 1er canal est Ix^2, 2e canal est Iy^2
+            le 3e canal est IxIy
+        """
     S = np.zeros((*im.shape, 3))
+    # TODO: calcul du tenseur de structure pour im.
 
-    # Somme pondérée des gradients locaux
-    for i in range(im.shape[0]):
-        
-        for j in range(im.shape[1]):
-    
-            for r in range(-1, 2):                     # Fenêtre de taille 3x3 par défaut
-                for s in range(-1, 2):
-                    
-                    if(r != 0 and s != 0):
-                        # Vérification des limites de l'image
-                        if 0 <= i - r < im.shape[0] and 0 <= j - s < im.shape[1]:
-                        
-                            weight = np.exp(-(r**2 + s**2) / (2 * sigma**2)) # pondération gaussienne
-                            
-                            # Accumulation des termes pondérés dans le tenseur de structure
-                            S[i, j, 0] += weight * Ix[i-r, j-s]**2
-                            S[i, j, 1] += weight * Iy[i-r, j-s]**2
-                            S[i, j, 2] += weight * Ix[i-r, j-s] * Iy[i-r, j-s]
+    # Calcul des dérivées
+
+
+    Ix = gaussian_filter(im, (0, 1), order=(0, 1))
+    Iy = gaussian_filter(im, (1, 0), order=(1, 0))
+
+    # Étape 2 : Calcul des métriques correspondantes
+
+    Ixx = Ix ** 2
+    Iyy = Iy ** 2
+    Ixy = Ix * Iy
+
+    # Étape 3 : Lissage gaussien à chaque terme
+
+    Ixx_smoothed = smooth_image(Ixx, sigma)
+    Iyy_smoothed = smooth_image(Iyy, sigma)
+    Ixy_smoothed = smooth_image(Ixy, sigma)
+
+    # Paramètres du filtre gaussien
+
+   # Marge pour la fenêtre
+    marge = 1
+
+    # Calcul des pondérations gaussiennes pour chaque terme
+
+    poids_xx = np.exp(-(np.arange(-marge, marge + 1) ** 2) / (2 * sigma ** 2))
+    poids_yy = np.exp(-(np.arange(-marge, marge + 1) ** 2) / (2 * sigma ** 2))
+    poids_xy = np.exp(-(np.arange(-marge, marge + 1) ** 2) / (2 * sigma ** 2))
+
+    # Normalisation des poids gaussiens pour chaque terme
+
+    poids_xx /= np.sum(poids_xx)
+    poids_yy /= np.sum(poids_yy)
+    poids_xy /= np.sum(poids_xy)
+
+    # Application de la pondération gaussienne sur chaque terme
+
+    Ixx_pond = Ixx_smoothed
+    Iyy_pond = Iyy_smoothed
+    Ixy_pond = Ixy_smoothed
+
+    # Initialisation des sommes pondérées
+    Sxx_sum = np.zeros_like(Ixx)
+    Syy_sum = np.zeros_like(Iyy)
+    Sxy_sum = np.zeros_like(Ixy)
+
+   # Calcul des sommes pondérées avec la fenêtre centrée
+
+    for y in range(marge, im.shape[0] - marge):
+        for x in range(marge, im.shape[1] - marge):
+            Sxx_sum[y, x] = np.sum(Ixx_pond[y - marge:y + 1 + marge, x - marge:x + 1 + marge])
+            Syy_sum[y, x] = np.sum(Iyy_pond[y - marge:y + 1 + marge, x - marge:x + 1 + marge])
+            Sxy_sum[y, x] = np.sum(Ixy_pond[y - marge:y + 1 + marge, x - marge:x + 1 + marge])
+
+
+    S[:, :, 0] = Sxx_sum
+    S[:, :, 1] = Syy_sum
+    S[:, :, 2] = Sxy_sum
+
+
 
     return S
+
+
+
+
 
 
 
@@ -156,15 +212,18 @@ def cornerness_response(S: np.ndarray) -> np.ndarray:                   #???#2
     # TODO: Remplir R avec la "cornerness" pour chaque pixel en utilisant le tenseur de structure.
     # On utilise la formulation det(S) - alpha * trace(S)^2, alpha = 0.06
     alpha = 0.06
+    #print("Dimension du tenseur de structure: " + str(S.shape))
 
     # Calcul du déterminant du tenseur de structure
-    det_S = np.linalg.det(S)
-
+    Ixx = S[:, :, 0]
+    Iyy = S[:, :, 1]
+    Ixy = S[:, :, 2]
+    det_S =  Ixx * Iyy - Ixy ** 2
     # Calcul de la trace du tenseur de structure
-    trace_S = np.trace(S, axis1=0, axis2=1)
+    trace_S = Ixx + Iyy
 
     # Calcul de la cornerness pour chaque pixel en utilisant la formule spécifiée
-    R = det_S - alpha * (trace_S**2)
+    R = det_S - alpha * trace_S ** 2
 
     return R
 
@@ -193,14 +252,16 @@ def nms_image(im: np.ndarray, w: int) -> np.ndarray:             #?????????? #3
         for c in range(1, im.shape[1]-1):
             # Extraction de la fenêtre centrée sur le pixel (l, c)
             fen = im[l - w:l + w + 1, c - w:c + w + 1]
-            
-            # Obtention de la valeur du pixel central
-            pixel_central = r[l, c]
-            
-            # Vérifier si la valeur du pixel central est le maximum dans la fenêtre
-            if pixel_central < np.max(fen):
-                # Suppression  du pixel central en lui assignant une valeur négative très basse
-                r[l, c] = -np.inf
+
+            # Vérifier que la fenêtre n'est pas vide
+            if fen.size > 0:
+                # Obtention de la valeur du pixel central
+                pixel_central = r[l, c]
+
+                # Vérifier si la valeur du pixel central est le maximum dans la fenêtre
+                if pixel_central < np.max(fen) and not np.any(np.isinf(fen)):
+                    # Suppression  du pixel central en lui assignant une valeur négative très basse
+                    r[l, c] = -np.inf
             
     return r
 
@@ -225,6 +286,8 @@ def harris_corner_detector(im: np.ndarray, sigma: float, thresh: float, nms: int
     img = im.mean(axis=2) # Convert to grayscale
     img = (img.astype(float) - img.min()) / (img.max() - img.min())
 
+    print("Dimension de l'image: " + str(im.shape))
+
     # Calculate structure matrix
     S = structure_matrix(img, sigma)
 
@@ -236,25 +299,25 @@ def harris_corner_detector(im: np.ndarray, sigma: float, thresh: float, nms: int
 
     # TODO: Comptez le nombre de réponses au-dessus d'un seuil thresh: ok 
     count = 0 # changez ceci: ok
-    for l in Rnms.shape[0]:
-        for c in Rnms.shape[1]:
+    for l in range(Rnms.shape[0]):
+        for c in range(Rnms.shape[1]):
             if(Rnms[l,c] > thresh):
                 count += 1
             
 
     n = count # <- fixer n = nombre de coins dans l'image: ok
     d = []
-    d = np.zeros(n) # initialisation du tableau d 
-    # TODO: remplir le tableau d avec le descripteur de chaque coin. Utilisez describe_index().: ok
+    # Initialiser le tableau d avec des objets de type object
+    d = np.zeros(n, dtype=object)
+
     count = 0
-    for l in Rnms.shape[0]:
-        for c in Rnms.shape[1]:
-            if(Rnms[l,c] > thresh):
-                descripteur = describe_point(Rnms, [(l,c)])
+    for l in range(Rnms.shape[0]):
+        for c in range(Rnms.shape[1]):
+            if Rnms[l, c] > thresh:
+                descripteur = describe_point(Rnms, (l, c))
                 d[count] = descripteur
                 count += 1
-    
-    
+
     return d
 
 def detect_and_draw_corners(im: np.ndarray, sigma: float, thresh: float, nms: int) -> np.ndarray:
